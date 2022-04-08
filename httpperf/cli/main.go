@@ -12,7 +12,6 @@ import (
 	"net/http/httptrace"
 	"os"
 	"os/signal"
-	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -55,8 +54,9 @@ func main() {
 				Timeout:   10 * time.Minute,
 				Transport: GetHttpTransport(*http2, *maxIdleConns, *maxIdleConnsPerHost),
 			})
-			intSec := *intervalMS * int(time.Millisecond)
-			err := postWorker(*rps, *total, time.Duration(intSec))
+			client.StartSatistics()
+			intMs := *intervalMS * int(time.Millisecond)
+			err := postWorker(*rps, *total, time.Duration(intMs))
 			if err != nil {
 				fmt.Println(err)
 			}
@@ -98,12 +98,8 @@ func main() {
 	// expected signal (as indicated by the goroutine
 	// above sending a value on `done`) and then exit.
 	<-done
-	for k, v := range client.statistics {
-		fmt.Println("url", k)
-		fmt.Printf("total requests: %d\n", *v.total)
-		fmt.Printf("total reused connections: %d\n", *v.reused)
-		fmt.Printf("reused connections / total request: %f\n", float32(*v.reused)/float32(*v.total))
-	}
+	client.StopStatistics()
+	client.PrintStatistics()
 
 }
 
@@ -142,6 +138,8 @@ func post() error {
 		return err
 	}
 
+	//	fmt.Println("body:", string(body))
+
 	return nil
 }
 
@@ -176,18 +174,15 @@ func GetHttpTransport(useHTTP2 bool, maxIdleConns, maxIdleConnsPerHost int) http
 }
 
 func wrapHttpClient(client *http.Client) *HttpWrapper {
-	return &HttpWrapper{client: client, statistics: make(map[string]struct {
-		total  *uint64
-		reused *uint64
-	})}
+	return &HttpWrapper{client: client}
 }
 
 type HttpWrapper struct {
 	client     *http.Client
-	statistics map[string]struct {
-		total  *uint64
-		reused *uint64
-	}
+	started    bool
+	statCh     chan stat
+	stop       context.CancelFunc
+	statistics map[string]counter
 }
 
 func (hw *HttpWrapper) Do(req *http.Request) (*http.Response, error) {
@@ -198,24 +193,67 @@ func (hw *HttpWrapper) Do(req *http.Request) (*http.Response, error) {
 			//			fmt.Printf("time to first response byte is %d, for url: %s \n", time.Since(start).Milliseconds(), req.URL)
 		},
 		GotConn: func(info httptrace.GotConnInfo) {
-			if _, ok := hw.statistics[req.URL.String()]; !ok {
-				zeroT := uint64(0)
-				zeroR := uint64(0)
-				hw.statistics[req.URL.String()] = struct {
-					total  *uint64
-					reused *uint64
-				}{
-					total:  &zeroT,
-					reused: &zeroR,
-				}
-			}
-			atomic.AddUint64(hw.statistics[req.URL.String()].total, 1)
+			stat := stat{url: req.URL.String()}
 			if info.Reused {
-				atomic.AddUint64(hw.statistics[req.URL.String()].reused, 1)
+				stat.reused = true
 			}
+			hw.statCh <- stat
 			//			fmt.Printf("Connection reused for %v? %v\n", req.URL, info.Reused)
 		},
 	}
 	req = req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
 	return hw.client.Do(req)
+
+}
+
+func (hw *HttpWrapper) StartSatistics() {
+	if hw.started {
+		return
+	}
+	hw.statistics = make(map[string]counter)
+	hw.statCh = make(chan stat, 1000)
+	ctx, cancel := context.WithCancel(context.Background())
+	hw.stop = cancel
+	go hw.run(ctx)
+}
+
+func (hw *HttpWrapper) StopStatistics() {
+	hw.stop()
+}
+func (hw *HttpWrapper) run(ctx context.Context) {
+	for {
+		select {
+		case stat := <-hw.statCh:
+			c := hw.statistics[stat.url]
+			c.total += 1
+			if stat.reused {
+				c.reused += 1
+			}
+
+			hw.statistics[stat.url] = c
+		case <-ctx.Done():
+			return
+		}
+	}
+
+}
+
+func (hw *HttpWrapper) PrintStatistics() {
+	for k, v := range hw.statistics {
+		fmt.Println("url", k)
+		fmt.Printf("total requests: %d\n", v.total)
+		fmt.Printf("total reused connections: %d\n", v.reused)
+		fmt.Printf("reused connections / total request: %f\n", float32(v.reused)/float32(v.total))
+	}
+
+}
+
+type counter struct {
+	total  int64
+	reused int64
+}
+
+type stat struct {
+	url    string
+	reused bool
 }
