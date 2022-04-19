@@ -3,15 +3,12 @@ package main
 import (
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"time"
-
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 )
 
 func main() {
-	h2s := &http2.Server{}
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/_health" {
@@ -31,15 +28,15 @@ func main() {
 
 	server := &http.Server{
 		Addr:         "0.0.0.0:8080",
-		Handler:      h2c.NewHandler(handler, h2s),
+		Handler:      handler,
 		ReadTimeout:  10 * time.Minute,
 		WriteTimeout: 10 * time.Minute,
 	}
 
 	fmt.Printf("Listening [0.0.0.0:8080]...\n")
-	if err := server.ListenAndServe(); err != nil {
-		fmt.Println(err)
-	}
+
+	log.Fatal(server.ListenAndServeTLS("../server.crt", "../server.key"))
+
 }
 
 const (
@@ -48,5 +45,3 @@ const (
 
 `
 )
-
-

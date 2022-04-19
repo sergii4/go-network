@@ -22,8 +22,10 @@ import (
 
 const (
 	method = http.MethodPost
-	url    = "http://localhost:8080/"
+	url    = "%s://localhost:8080/"
 )
+
+var urlWithSchema string
 
 var client *tracer.HttpWrapper
 
@@ -34,6 +36,7 @@ func main() {
 	total := fs.Int("total", 100, "total requests")
 	intervalMS := fs.Int("int", 0, "interval between request, milliseconds")
 	http2 := fs.Bool("http2", false, "use http2")
+	https := fs.Bool("https", false, "use https")
 
 	maxIdleConns := fs.Int("mic", 100, "max idle conns")
 	maxIdleConnsPerHost := fs.Int("micph", 2, "max idle conns per host")
@@ -44,12 +47,24 @@ func main() {
 		ShortHelp:  "Repeatedly print the argument to stdout.",
 		FlagSet:    fs,
 		Exec: func(_ context.Context, _ []string) error {
+			urlWithSchema = fmt.Sprintf(url, "http")
+			config := &tls.Config{InsecureSkipVerify: true}
+			if *https {
+				urlWithSchema = fmt.Sprintf(url, "https")
+//				cer, err := tls.LoadX509KeyPair("../server.crt", "../server.key")
+//				if err != nil {
+//					return err
+//				}
+//				config = &tls.Config{Certificates: []tls.Certificate{cer}}
+
+			}
 			client = tracer.WrapHttpClient(&http.Client{
 				Timeout:   10 * time.Minute,
-				Transport: GetHttpTransport(*http2, *maxIdleConns, *maxIdleConnsPerHost),
+				Transport: GetHttpTransport(*http2, *maxIdleConns, *maxIdleConnsPerHost, config),
 			})
 			client.StartSatistics()
 			intMs := *intervalMS * int(time.Millisecond)
+
 			err := postWorker(*rps, *total, time.Duration(intMs))
 			if err != nil {
 				fmt.Println(err)
@@ -94,7 +109,7 @@ func postWorker(rps, total int, interval time.Duration) error {
 }
 
 func post() error {
-	req, err := http.NewRequest(method, url, http.NoBody)
+	req, err := http.NewRequest(method, urlWithSchema, http.NoBody)
 
 	if err != nil {
 		return err
@@ -116,7 +131,7 @@ func post() error {
 	return nil
 }
 
-func GetHttpTransport(useHTTP2 bool, maxIdleConns, maxIdleConnsPerHost int) http.RoundTripper {
+func GetHttpTransport(useHTTP2 bool, maxIdleConns, maxIdleConnsPerHost int, config *tls.Config) http.RoundTripper {
 	if useHTTP2 {
 		// workaround to get the golang standard HTTP/2 client to connect to an H2C enabled server.
 		return &http2.Transport{
@@ -139,8 +154,9 @@ func GetHttpTransport(useHTTP2 bool, maxIdleConns, maxIdleConnsPerHost int) http
 		MaxIdleConns:          maxIdleConns,
 		MaxIdleConnsPerHost:   maxIdleConnsPerHost,
 		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
+		TLSHandshakeTimeout:   0,
 		ExpectContinueTimeout: 1 * time.Second,
+		TLSClientConfig:       config,
 	}
 
 }
