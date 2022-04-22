@@ -1,4 +1,4 @@
-module http2server
+module h2csrv
 
 go 1.17
 

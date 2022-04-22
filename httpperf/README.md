@@ -7,7 +7,7 @@ This folder contains http clients and servers as well as http tracer tool.
 ### Run HTTP1.1/H2C server
 To make an experiment with http(1.1 and 2) run server:
 ```
-$ cd http2server
+$ cd h2csrv
 $ go run main.go
 
 ```
@@ -117,7 +117,7 @@ $ netstat -nt | grep  8080 | grep -i time_wait  | wc -l
 ### Run HTTPS server 
 
 ```
-$ cd httpssrv
+$ cd sslsrv
 $ go run maing.go
 
 ```
@@ -139,4 +139,20 @@ reused connections / total request: 0.999000
 ```
 We reused connection in 999(!) requests from 1000. It illustrates that Golang support HTTP/2 over HTTPS by defualt. 
 
+# Summary
 
+http client with defalt transport - t\
+http client with http/2 transport - t2\
+default http server - srv\
+http server with upgrade to h2c - h2cSrv\
+https server - httpsSrv
+
+t  (http url)->    srv      ✅ http/1.1
+
+t  (http url)->    h2cSrv   ✅ http1.1
+
+t2 (http url)->    h2cSrv   ✅ http/2 (h2c)
+
+t (https url)->    httpsSrv ✅ http/2
+
+t2 (http url)->    srv      ❌
